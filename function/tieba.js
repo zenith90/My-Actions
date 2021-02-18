@@ -12,15 +12,20 @@ const $ = new Env('百度签到')
 const notify = $.isNode() ? require('./sendNotify') : '';
 const SEND_KEY = process.env.SEND_KEY
 const bduss = process.env.BDUSS
+const jump = process.env.JUMP
 
 $.CFG_isOrderBars = 'false' // 1: 经验排序, 2: 连签排序
-$.CFG_maxShowBars = 100 //每次通知数量
+$.CFG_maxShowBars = 50 //每次通知数量
 $.CFG_maxSignBars = 5 // 每次并发执行多少个任务
 $.CFG_signWaitTime = 5000 // 每次并发间隔时间 (毫秒)
 
 //var bduss = ''
 var headerInfo = Object.assign(`BDUSS=${bduss}`);
 
+if (!bduss) {
+    console.log("未填写百度Cookie取消运行");
+    process.exit(0);
+}
 
 !(async () => {
     await tieba()
@@ -40,10 +45,7 @@ function tieba() {
                 // 处理异常
                 if (_data.no !== 0) {
                     $.log(`获取清单失败! 原因: ${_data.error}`)
-                    if(SEND_KEY){
-                        notify.sendNotify("百度签到", `登录失败 Cookie已过期  ${_data.error}`);
-                        process.exit(0);
-                    }
+                    notify.sendNotify("百度签到", `登录失败 Cookie已过期  ${_data.error}`);
                     process.exit(0);
                 }
                 // 组装数据
@@ -70,8 +72,13 @@ async function signbars(bars) {
     // 处理`未签`数据
     let _curbarIdx = 1
     let _signbarCnt = 0
+   
     bars.filter((bar) => !bar.isSign).forEach((bar) => _signbarCnt++)
-    for (let bar of bars.filter((bar) => !bar.isSign)) {
+    // 跳出指定不签到的贴吧
+    if ( jump == $.bars.name) {
+        return true;
+    }
+    for (let bar of bars.filter((bar) => !bar.isSign) ) {
         const signbarAct = (resove) => {
             const url = { url: 'https://tieba.baidu.com/sign/add', headers: { Cookie: headerInfo } }
             url.headers['Host'] = 'tieba.baidu.com'
@@ -93,6 +100,12 @@ async function signbars(bars) {
                     bar.signMsg = err !== null ? error : e
                     $.logErr(e, resp)
                 } finally {
+                    for (var i = 0; i < jump.length; i++) {
+                        if ( jump[i] == bar.name) {
+                            return true;
+                        }
+                    }
+
                     $.log(`❕ 百度贴吧:【${bar.name}】签到完成!`)
                     $.msg(`❕ 百度贴吧:【${bar.name}】签到完成!`)
                     resove()
@@ -101,6 +114,12 @@ async function signbars(bars) {
         }
         signbarActs.push(new Promise(signbarAct))
         if (signbarActs.length === $.CFG_maxSignBars || _signbarCnt === _curbarIdx) {
+            // 跳出指定不签到的贴吧
+            for (var i = 0; i < jump.length; i++) {
+                if ( jump[i] == bar.name) {
+                    return true;
+                }
+            }
             $.log('', `⏳ 正在发起 ${signbarActs.length} 个签到任务!`)
             await Promise.all(signbarActs)
             await $.wait($.CFG_signWaitTime)
@@ -119,6 +138,9 @@ function getbars(bars) {
             url.headers['User-Agent'] = 'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 13_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1 Mobile/15E148 Safari/604.1'
             $.get(url, (err, resp, data) => {
                 try {
+                    if(!isJSON_test(data)){
+                        return false;
+                    }
                     const _signinfo = JSON.parse(data).data.sign_user_info
                     bar.signRank = _signinfo.rank
                     bar.contsignCnt = _signinfo.sign_keep
@@ -251,6 +273,20 @@ function showmsg() {
         })
         resolve()
     })
+}
+
+function isJSON_test(str) {
+    if (typeof str == 'string') {
+        try {
+            var obj=JSON.parse(str);
+            //console.log('转换成功：'+obj);
+            return true;
+        } catch(e) {
+            //console.log('error：'+str+'!!!'+e);
+            return false;
+        }
+    }
+    //console.log('It is not a string!')
 }
 
 // prettier-ignore
